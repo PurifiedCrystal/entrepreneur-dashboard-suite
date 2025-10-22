@@ -1,179 +1,165 @@
 # Backend Structure Document
 
-This document outlines the backend architecture, hosting, and infrastructure for the **codeguide-starter** project. It uses plain language so anyone can understand how the backend is set up and how it supports the application.
+## Backend Architecture
 
-## 1. Backend Architecture
+The backend for the Entrepreneur Dashboard Suite is built on Next.js’ App Router and uses Rest-style API routes. It follows a simple layered approach:  
+•  **Routes:** Define the public URLs (e.g., `/api/tasks`).  
+•  **Controllers/Handlers:** Handle incoming requests, run validation, and call the right business logic.  
+•  **Services/Models:** Use Drizzle ORM to read and write data in PostgreSQL.  
 
-- **Framework and Design Pattern**
-  - We use **Next.js API Routes** to handle all server-side logic. These routes live alongside the frontend code in the same repository, making development and deployment simpler.
-  - The backend follows a **layered pattern**:
-    1. **API Layer**: Receives requests (login, registration, data fetch).  
-    2. **Service Layer**: Contains the core business logic (user validation, password hashing).  
-    3. **Data Access Layer**: Talks to the database via a simple ORM (e.g., Prisma or TypeORM).
+This structure supports:
+•  **Scalability:** Serverless functions on Vercel can grow or shrink automatically with traffic.  
+•  **Maintainability:** Clear separation of routes, logic, and data keeps code organized.  
+•  **Performance:** Next.js serverless functions spin up quickly, and Vercel’s global network serves assets close to your users.
 
-- **Scalability**
-  - Stateless API routes can scale horizontally—new instances can spin up on demand.  
-  - We can add caching or a message queue (e.g., Redis or RabbitMQ) without changing the core code.
+## Database Management
 
-- **Maintainability**
-  - Code for each feature is grouped by route (authentication, dashboard).  
-  - A service layer separates complex logic from request handling.
+We use PostgreSQL (a relational SQL database) together with Drizzle ORM.  
 
-- **Performance**
-  - Lightweight Node.js handlers keep response times low.  
-  - Future use of database connection pooling and Redis for caching repeated queries.
+•  **PostgreSQL (SQL):** Reliable, ACID-compliant, and widely supported for structured data.  
+•  **Drizzle ORM:** Type-safe library that maps JavaScript/TypeScript objects to database tables. It prevents errors by enforcing your data shapes at compile time.
 
-## 2. Database Management
+Data is organized into tables for users, tasks, contacts, projects, and any join tables needed for relationships. Drizzle automatically handles migrations (creating or updating tables) and provides an easy API for queries.
 
-- **Database Choice**
-  - We recommend **PostgreSQL** for structured data and reliable transactions.  
-  - In-memory caching can be added later with **Redis** for session tokens or frequently read data.
+## Database Schema
 
-- **Data Storage and Access**
-  - Use an ORM like **Prisma** or **TypeORM** to map JavaScript/TypeScript objects to database tables.
-  - Connection pooling ensures efficient use of database connections under load.
-  - Migrations track schema changes over time, keeping development, staging, and production in sync.
+Below is a human-readable summary of the main tables. You can also use these SQL definitions directly in PostgreSQL.
 
-- **Data Practices**
-  - Passwords are never stored in plain text—they are salted and hashed with **bcrypt** before saving.
-  - All outgoing data is typed and validated to prevent malformed records.
+Users table:
+- id (primary key)
+- email (unique)
+- passwordHash
+- name
+- createdAt, updatedAt
 
-## 3. Database Schema
+Tasks table:
+- id (primary key)
+- title
+- description
+- status (e.g., pending, completed)
+- dueDate
+- userId (foreign key → Users.id)
+- projectId (nullable foreign key → Projects.id)
+- createdAt, updatedAt
 
-### Human-Readable Format
+Contacts table:
+- id (primary key)
+- name
+- email
+- company
+- phone (optional)
+- userId (foreign key → Users.id)
+- createdAt, updatedAt
 
-- **Users**
-  - **id**: Unique identifier  
-  - **email**: User’s email address (unique)  
-  - **password_hash**: Securely hashed password  
-  - **created_at**: Account creation timestamp
+Projects table:
+- id (primary key)
+- name
+- description
+- userId (foreign key → Users.id)
+- createdAt, updatedAt
 
-- **Sessions**
-  - **id**: Unique session record  
-  - **user_id**: Links to a user  
-  - **token**: Random string for authentication  
-  - **expires_at**: When the token stops working  
-  - **created_at**: When the session was created
+Optional join table for many-to-many (Projects ↔ Contacts):
+- projectId (foreign key → Projects.id)
+- contactId (foreign key → Contacts.id)
 
-- **DashboardItems** *(optional for dynamic data)*
-  - **id**: Unique record  
-  - **title**: Item title  
-  - **content**: Item details  
-  - **created_at**: When the item was added
-
-### SQL Schema (PostgreSQL)
+SQL example (PostgreSQL):
 ```sql
--- Users table
 CREATE TABLE users (
   id SERIAL PRIMARY KEY,
   email VARCHAR(255) UNIQUE NOT NULL,
-  password_hash VARCHAR(255) NOT NULL,
-  created_at TIMESTAMPTZ DEFAULT now()
+  password_hash TEXT NOT NULL,
+  name VARCHAR(100) NOT NULL,
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
 );
 
--- Sessions table
-CREATE TABLE sessions (
+CREATE TABLE tasks (
   id SERIAL PRIMARY KEY,
-  user_id INT REFERENCES users(id) ON DELETE CASCADE,
-  token VARCHAR(255) UNIQUE NOT NULL,
-  expires_at TIMESTAMPTZ NOT NULL,
-  created_at TIMESTAMPTZ DEFAULT now()
+  title VARCHAR(200) NOT NULL,
+  description TEXT,
+  status VARCHAR(50) NOT NULL,
+  due_date DATE,
+  user_id INTEGER REFERENCES users(id),
+  project_id INTEGER REFERENCES projects(id),
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
 );
-
--- Dashboard items table
-CREATE TABLE dashboard_items (
-  id SERIAL PRIMARY KEY,
-  title TEXT NOT NULL,
-  content TEXT,
-  created_at TIMESTAMPTZ DEFAULT now()
-);
+-- Similar definitions for contacts and projects
 ```  
 
-## 4. API Design and Endpoints
+## API Design and Endpoints
 
-- **Approach**: We follow a **RESTful** style, grouping related endpoints under `/api` directories.
+We follow a RESTful style using Next.js API routes under `/app/api`. Each resource (tasks, contacts, projects) has its own folder. Key endpoints:
 
-- **Key Endpoints**
-  - `POST /api/auth/register`  
-    • Accepts `{ email, password }`  
-    • Creates a new user and issues a session token  
-  - `POST /api/auth/login`  
-    • Accepts `{ email, password }`  
-    • Verifies credentials and returns a session token  
-  - `POST /api/auth/logout`  
-    • Invalidates the session token on the server  
-  - `GET /api/dashboard/data`  
-    • Requires a valid session  
-    • Returns user-specific data or dashboard items  
+•  **Authentication** (`/api/auth/*`)
+   - Sign Up, Sign In, Sign Out, Session checks
 
-- **Communication**
-  - Frontend sends JSON requests; backend replies with JSON and appropriate HTTP status codes.  
-  - Protected routes check for a valid session token (in cookies or Authorization header).
+•  **Tasks** (`/api/tasks`)
+   - `GET /api/tasks`: list user’s tasks
+   - `POST /api/tasks`: create a new task
+   - `PUT /api/tasks/:id`: update an existing task
+   - `DELETE /api/tasks/:id`: remove a task
 
-## 5. Hosting Solutions
+•  **Contacts** (`/api/contacts`)
+   - `GET /api/contacts`
+   - `POST /api/contacts`
+   - `PUT /api/contacts/:id`
+   - `DELETE /api/contacts/:id`
 
-- **Cloud Provider**:  
-  - **Vercel** (recommended) offers seamless Next.js deployments, auto-scaling, and built-in CDN.  
-  - Alternatively, **Netlify** or any Node.js-capable host will work.
+•  **Projects** (`/api/projects`)
+   - `GET /api/projects`
+   - `POST /api/projects`
+   - `PUT /api/projects/:id`
+   - `DELETE /api/projects/:id`
 
-- **Benefits**
-  - **Reliability**: Global servers and failover across regions.  
-  - **Scalability**: Auto-scale serverless functions based on traffic.  
-  - **Cost-Effectiveness**: Pay-per-use model means low cost for small projects.
+•  **Search** (`/api/search`)
+   - `POST /api/search`: runs a query across tasks, contacts, and projects
 
-## 6. Infrastructure Components
+Each endpoint:
+1.  Validates the user’s session and input data.  
+2.  Calls Drizzle ORM to interact with the database.  
+3.  Returns JSON results or error messages.
 
-- **Load Balancer**
-  - Provided by the hosting platform—distributes API requests across function instances.
+## Hosting Solutions
 
-- **CDN (Content Delivery Network)**
-  - Vercel’s global edge network caches static assets (CSS, JS, images) for faster page loads.
+•  **Vercel (Primary):**  
+   - Serverless deployment for Next.js.  
+   - Built-in global CDN for static assets (JS, CSS, images).  
+   - Automatic scaling: functions spin up based on demand.  
+   - Simple Git integration: deploy from each push.
 
-- **Caching**
-  - **Redis** (optional) for session storage or caching dashboard queries to reduce database load.
+•  **Docker Support (Local/Custom):**  
+   - `Dockerfile` and `docker-compose.yaml` included.  
+   - Reproduce a consistent environment locally or on another cloud provider.
 
-- **Object Storage**
-  - For file uploads or backups, integrate with AWS S3 or similar services.
+## Infrastructure Components
 
-- **Message Queue**
-  - In future, use **RabbitMQ** or **Kafka** for background tasks (e.g., email notifications).
+•  **Load Balancing & Edge Network:** Under the hood, Vercel routes requests to the nearest edge location, distributing traffic and minimizing latency.  
+•  **CDN:** Static files (CSS, JS, images) are cached globally.  
+•  **Caching:** Next.js can cache API responses where appropriate. You can add HTTP cache headers or integrate Redis if needed in the future.  
+•  **Containerization:** Docker ensures all developers work in the same environment and eases onboarding.
 
-## 7. Security Measures
+These components work together to deliver fast page loads, distribute traffic seamlessly, and provide a reliable end-user experience.
 
-- **Authentication & Authorization**
-  - Passwords hashed with **bcrypt** and salted.  
-  - Session tokens stored in secure, HttpOnly cookies or Authorization headers.  
-  - Protected endpoints verify tokens before proceeding.
+## Security Measures
 
-- **Data Encryption**
-  - **HTTPS/TLS** encrypts data in transit.  
-  - Database connections use SSL to encrypt data between the app and the database.
+•  **Authentication:** Managed by Better Auth, with secure password hashing and session tokens.  
+•  **Authorization:** Every API route checks the user’s session and only returns data belonging to that user.  
+•  **Data Encryption:** All traffic runs over HTTPS by default on Vercel.  
+•  **Environment Variables:** Secrets (e.g., database URL, auth keys) stored securely in Vercel’s Dashboard or `.env` files locally.  
+•  **SQL Injection Protection:** Drizzle ORM builds parameterized queries automatically.  
+•  **Rate Limiting (Recommended):** You can add middleware or third-party services (e.g., Vercel Edge Middleware) to limit abusive calls.
 
-- **Input Validation**
-  - Every incoming request is validated (e.g., valid email format, password length) to prevent SQL injection or other attacks.
+## Monitoring and Maintenance
 
-- **Web Security Best Practices**
-  - Enable **CORS** policies to limit allowed origins.  
-  - Use **CSRF tokens** or same-site cookies to prevent cross-site requests.  
-  - Set secure headers with **Helmet** or a similar middleware.
+•  **Logs & Metrics:** Vercel provides real-time logs for serverless functions. You can forward logs to tools like Datadog or Sentry for error tracking.  
+•  **Health Checks:** Use Vercel’s uptime monitoring or integrate a third-party ping service.  
+•  **Database Migrations:** Drizzle supports versioned migrations to keep schema in sync across environments.  
+•  **CI/CD:** Each Git push triggers tests and builds. Consider adding GitHub Actions for unit/integration tests using Jest.  
+•  **Dependency Updates:** Regularly update Node, Next.js, and all libraries to patch security vulnerabilities.
 
-## 8. Monitoring and Maintenance
+## Conclusion and Overall Backend Summary
 
-- **Performance Monitoring**
-  - Integrate **Sentry** or **LogRocket** for real-time crash reporting and performance tracing.  
-  - Use Vercel’s built-in analytics to track request latencies and error rates.
+The Entrepreneur Dashboard Suite backend is a modern, API-driven setup based on Next.js serverless functions and PostgreSQL via Drizzle ORM. It’s built to scale effortlessly on Vercel, remains maintainable through a layered code structure, and stays performant thanks to global caching and edge routing. Security best practices—strong authentication, encrypted transport, parameterized queries—protect user data. Monitoring tools and migration support ensure the system stays healthy and up-to-date.
 
-- **Logging**
-  - Structured logs (JSON) for all API requests and errors, shipped to a log management service like **Datadog** or **Logflare**.
-
-- **Health Checks**
-  - Define a `/health` endpoint that returns a 200 status if the service is up and the database is reachable.
-
-- **Maintenance Strategies**
-  - Automated migrations run on deploy to keep the database schema up to date.  
-  - Scheduled dependency audits and security scans (e.g., `npm audit`).
-  - Regular backups of the database (daily or weekly depending on usage).
-
-## 9. Conclusion and Overall Backend Summary
-
-The backend for **codeguide-starter** is built on Next.js API Routes and Node.js, paired with PostgreSQL for data and optional Redis for caching. It follows a clear layered architecture that keeps code easy to maintain and extend. With RESTful endpoints for authentication and data, secure practices like password hashing and HTTPS, and hosting on Vercel for scalability and global performance, this setup meets the project’s goals for a fast, secure, and developer-friendly foundation. Future enhancements—such as background job queues, advanced monitoring, or richer data models—can be added without disrupting the core structure.
+This foundation lets you focus on adding features (tasks, contacts, projects, advanced search) without worrying about core infrastructure. It’s a robust, flexible backend ready to grow with your entrepreneur workspace.
